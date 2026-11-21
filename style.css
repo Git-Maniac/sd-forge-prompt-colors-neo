@@ -1,0 +1,29 @@
+/* Layout of the settings page "Prompt Colors": several narrow fields side by side */
+
+/* the page is a grid, each field is at least 260px wide */
+#column_settings_prompt_colors {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 8px 16px;
+    align-items: start;
+}
+
+/* Gradio can put the fields into a "form" box, then the fields are placed directly in the grid */
+#column_settings_prompt_colors > .form {
+    display: contents !important;
+}
+
+/* order: first the keyword list, right of it the keyword color, then all other colors */
+#setting_prompt_colors_keywords {
+    order: -2;
+    /* as wide as the whole row (from the first to the last column) */
+    grid-column: 1 / -1;
+}
+#setting_prompt_colors_keyword {
+    order: -1;
+}
+
+/* the timer field is the last one and starts a new row */
+#setting_prompt_colors_timer {
+    grid-column: 1;
+}
