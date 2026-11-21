@@ -1,6 +1,7 @@
 # sd-forge-prompt-colors-neo
 Prettier prompt with collorfull tags for Forge-Neo from 
-Supports:
+
+It supports:
 
   sd-webui-forge-neo from Haoming02: <https://github.com/Haoming02/sd-webui-forge-classic>
   
