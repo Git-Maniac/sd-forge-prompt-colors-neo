@@ -6,7 +6,7 @@
 
 **sd-forge-prompt-colors-neo** is a seamless extension for [sd-webui-forge-neo](https://github.com/Haoming02/sd-webui-forge-classic)
 
-Prettier prompts with collorfull tags. You can configure in prompt tag words like BREAK, AND or brackets like <> () [] {} with colors of your choise.
+Prettier prompts with collorfull tags. You can configure for prompt tag words like BREAK, AND or brackets like <> () [] {} with colors of your choise.
 
 It supports:
 
