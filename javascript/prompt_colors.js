@@ -332,6 +332,49 @@
         return numberEnd - i;
     }
 
+    // the three kinds of $ that are colored together with the text behind them.
+    // They are used by colorStyleVariable() below. Each one gets the position "i" of the $
+    // and returns how many characters it colored.
+
+    // ${name=value} or ${name}: color everything up to the closing curly bracket
+    function colorDynamicVariable(text, i, colorOf) {
+        const close = findClosingBrace(text, i + 1);    // i + 1 is the position of the {
+        if (close === -1) {
+            colorOf[i] = "dollar";    // no closing bracket: only the dollar sign
+            return 1;
+        }
+
+        paint(colorOf, i, close, "dollar");
+        return close + 1 - i;
+    }
+
+    // $(my style) or $1(my style): color everything up to the closing round bracket
+    // "nameStart" is the position of the ( (behind the $ and the part number)
+    function colorStyleInBrackets(text, i, nameStart, colorOf) {
+        const close = text.indexOf(")", nameStart + 1);
+        const lineEnd = text.indexOf("\n", i);
+        const sameLine = lineEnd === -1 || close < lineEnd;    // the ) must be in the same line
+
+        if (close === -1 || !sameLine) {
+            colorOf[i] = "dollar";    // no closing bracket: only the dollar sign
+            return 1;
+        }
+
+        paint(colorOf, i, close, "dollar");
+        return close + 1 - i;
+    }
+
+    // $style: color the $ and go on until the name ends
+    function colorSimpleStyle(text, i, colorOf) {
+        let end = i + 1;
+        while (text[end] !== undefined && !STYLE_END_CHARS.includes(text[end])) {
+            end++;
+        }
+
+        paint(colorOf, i, end - 1, "dollar");    // the dollar sign and the name
+        return end - i;
+    }
+
     // rule: a style variable: the $ and the style name behind it get the same color
     //   $style          the name ends at a space, a comma, a bracket, ...
     //   $(my style)     with spaces in the name: the name is in round brackets
@@ -349,16 +392,9 @@
             return 1;
         }
 
-        // ${name=value} or ${name} (a Dynamic Prompts variable): color everything up to the
-        // closing curly bracket
+        // ${name=value} or ${name} (a Dynamic Prompts variable)
         if (text[i + 1] === "{") {
-            const close = findClosingBrace(text, i + 1);
-            if (close !== -1) {
-                paint(colorOf, i, close, "dollar");
-                return close + 1 - i;
-            }
-            colorOf[i] = "dollar";    // no closing bracket: only the dollar sign
-            return 1;
+            return colorDynamicVariable(text, i, colorOf);
         }
 
         // a part number behind the $ (the 1 in $1style or $1(my style)) belongs to the name
@@ -367,27 +403,13 @@
             nameStart++;
         }
 
-        // $(my style) or $1(my style): color everything up to the closing bracket (in the same line)
+        // $(my style) or $1(my style): the name is in round brackets
         if (text[nameStart] === "(") {
-            const close = text.indexOf(")", nameStart + 1);
-            const lineEnd = text.indexOf("\n", i);
-            const sameLine = lineEnd === -1 || close < lineEnd;
-            if (close !== -1 && sameLine) {
-                paint(colorOf, i, close, "dollar");
-                return close + 1 - i;
-            }
-            colorOf[i] = "dollar";    // no closing bracket: only the dollar sign
-            return 1;
+            return colorStyleInBrackets(text, i, nameStart, colorOf);
         }
 
-        // $style: go on until the name ends
-        let end = i + 1;
-        while (text[end] !== undefined && !STYLE_END_CHARS.includes(text[end])) {
-            end++;
-        }
-
-        paint(colorOf, i, end - 1, "dollar");    // the dollar sign and the name
-        return end - i;
+        // $style: the name ends at a space, a comma, a bracket, ...
+        return colorSimpleStyle(text, i, colorOf);
     }
 
     // rule: a Dynamic Prompts wrap command  %{ ... }  : everything up to the closing curly bracket
@@ -695,6 +717,25 @@
     // 8. The color fields on the settings page
     // ===============================================================
 
+    // which text color can be read on this background: "black" or "white"
+    // "rgb" is the background color as the browser writes it, for example "rgb(220, 220, 170)"
+    function textColorFor(rgb) {
+        // cut the text into the 3 numbers
+        const parts = rgb.replace("rgba(", "").replace("rgb(", "").replace(")", "").split(",");
+        const red = Number(parts[0]);
+        const green = Number(parts[1]);
+        const blue = Number(parts[2]);
+
+        // how bright is the color? 0 = black ... 255 = white
+        const brightness = (red * 299 + green * 587 + blue * 114) / 1000;
+
+        // bright color: black text, dark color: white text
+        if (brightness > 140) {
+            return "black";
+        }
+        return "white";
+    }
+
     // colors one field of the settings page with the color that is written in it
     function paintSettingField(name) {
         const field = getRoot().querySelector(`#setting_prompt_colors_${name} input, #setting_prompt_colors_${name} textarea`);
@@ -715,23 +756,8 @@
         // is the text a valid color, for example #ff8800 ?
         if (value !== "" && CSS.supports("color", value)) {
             field.style.backgroundColor = value;
-
-            // the browser tells us the color as "rgb(220, 220, 170)", cut it into the 3 numbers
-            const rgb = getComputedStyle(field).backgroundColor;
-            const parts = rgb.replace("rgba(", "").replace("rgb(", "").replace(")", "").split(",");
-            const red = Number(parts[0]);
-            const green = Number(parts[1]);
-            const blue = Number(parts[2]);
-
-            // how bright is the color? 0 = black ... 255 = white
-            const brightness = (red * 299 + green * 587 + blue * 114) / 1000;
-
-            // dark color: white text, bright color: black text
-            if (brightness > 140) {
-                field.style.color = "black";
-            } else {
-                field.style.color = "white";
-            }
+            // the browser tells us the real color of the field as "rgb(220, 220, 170)"
+            field.style.color = textColorFor(getComputedStyle(field).backgroundColor);
         } else {
             // not a color: the field looks normal
             field.style.backgroundColor = "";
