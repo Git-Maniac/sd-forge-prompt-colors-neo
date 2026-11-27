@@ -7,6 +7,9 @@
 //   $style            a style variable: the $ and the style name get the same color
 //   ${name=value}     a Dynamic Prompts variable: everything up to the } gets the same color
 //   :1.2              a colon with a number behind it (weights)
+//   75 token blocks   a horizontal line over the text line where a block of 75 tokens starts
+//                     (75 is the default, the size can be changed in the settings)
+//                     (the server counts the tokens, see scripts/prompt_colors_chunks.py)
 //   BREAK, AND, ...   keywords (the list is in the settings)
 //   __name__          wildcards (from the first __ to the next __)
 //   # ... and // ...  comment until the end of the line
@@ -39,6 +42,9 @@
     // 1. Fixed values
     // ===============================================================
 
+    // how long to wait after typing before the blocks of 75 tokens are asked from the server (ms)
+    const CHUNK_DELAY_MS = 400;
+
     // the prompt fields that get colored (ids in the WebUI)
     const FIELD_IDS = [
         "txt2img_prompt", "txt2img_neg_prompt",
@@ -48,6 +54,10 @@
 
     // names of the colors (same names as in scripts/prompt_colors_settings.py)
     const COLOR_NAMES = ["curly", "round", "square", "angle", "pipe", "dollar", "percent", "comment", "wildcard", "keyword", "weight", "error"];
+
+    // all settings fields that are painted with the color written in them
+    // (the colors above, and the line color of the 75 token blocks)
+    const PAINTED_SETTINGS = [...COLOR_NAMES, "chunk_line_color"];
 
     // characters that stand alone and need no partner: character -> color name
     // ($ and % are not here: they are handled together with the text behind them)
@@ -105,6 +115,44 @@
             }
         }
         return keywords;
+    }
+
+    // how many tokens one block has, from the settings (default 75)
+    // gives 0 if the lines are switched off (field is 0, empty, or not a number)
+    function getChunkSize() {
+        if (typeof opts === "undefined") {
+            return 75;
+        }
+
+        const size = Math.floor(Number(opts.prompt_colors_chunk_size));
+        if (!(size >= 1)) {
+            return 0;    // not a number, empty, or less than 1 = off
+        }
+        return size;
+    }
+
+    // one text that changes when the line color or the block size changes
+    // ("" = no line is shown). It is used to find out if the backdrop must be built again.
+    function getChunkKey() {
+        const color = getChunkLineColor();
+        if (color === "") {
+            return "";
+        }
+        return color + "|" + getChunkSize();
+    }
+
+    // the color of the line at the start of every block of 75 tokens
+    // gives "" (= no line) if the blocks are switched off (size 0) or the color is not valid
+    function getChunkLineColor() {
+        if (typeof opts === "undefined" || getChunkSize() === 0) {
+            return "";
+        }
+
+        const value = String(opts.prompt_colors_chunk_line_color || "").trim();
+        if (value === "" || !CSS.supports("color", value)) {
+            return "";
+        }
+        return value;
     }
 
     // is this character a letter, a digit or _ ?
@@ -217,6 +265,16 @@
             }
 
             css += `.pc-${name} { color: ${value}; }\n`;
+        }
+
+        // a horizontal line over the whole width of the field, at the top of the text line
+        // where a block of 75 tokens starts. The line is an extra element in front of the first
+        // character (absolute = it takes no room, so the text does not move). It is placed
+        // relative to the backdrop, so left: 0 and right: 0 are the two sides of the field.
+        const lineColor = getChunkLineColor();
+        if (lineColor !== "") {
+            css += `.pc-chunk-start::before { content: ""; position: absolute; left: 0; right: 0; height: 2px; background: ${lineColor}; }
+`;
         }
 
         // put the css into a <style> element (it is created the first time)
@@ -429,13 +487,21 @@
     }
 
     // rule: the single character  |
-    function colorSingleChar(text, i, colorOf) {
+    // A pipe is only valid inside curly brackets { }, for example {a|b}.
+    // Outside of them it gets the error color (comments are handled by earlier rules,
+    // so a pipe in a comment never gets here).
+    function colorSingleChar(text, i, colorOf, waiting) {
         const colorName = SINGLE[text[i]];
         if (colorName === undefined) {
             return 0;
         }
 
-        colorOf[i] = colorName;
+        // is one of the brackets that are still open a curly bracket?
+        const insideCurly = waiting.some(function (position) {
+            return text[position] === "{";
+        });
+
+        colorOf[i] = insideCurly ? colorName : "error";
         return 1;
     }
 
@@ -500,7 +566,7 @@
             if (length === 0 && !hasBackslash) length = colorWeight(text, i, colorOf);
             if (length === 0 && !hasBackslash) length = colorStyleVariable(text, i, colorOf);
             if (length === 0 && !hasBackslash) length = colorWrapCommand(text, i, colorOf);
-            if (length === 0 && !hasBackslash) length = colorSingleChar(text, i, colorOf);
+            if (length === 0 && !hasBackslash) length = colorSingleChar(text, i, colorOf, waiting);
             if (length === 0 && !hasBackslash) length = colorBracket(text, i, colorOf, waiting);
 
             // go on behind the characters that were colored (if no rule fit: go one character on)
@@ -521,24 +587,37 @@
 
     // turns the text and its colors into html for the backdrop, for example:
     //     a <span class="pc-curly">{</span>b<span class="pc-curly">}</span>
-    function makeHtml(text, colorOf) {
+    // chunkStarts: the positions where block 2, 3, 4, ... start (from the API), optional
+    function makeHtml(text, colorOf, chunkStarts) {
+        // a Set is fast to look in, also for a long text with many blocks
+        const starts = new Set(chunkStarts || []);
         let html = "";
 
-        // Characters in a row with the same color share ONE <span>  (fewer elements = faster page)
+        // Characters in a row with the same color share ONE <span>
+        // (fewer elements = faster page)
         // "start" is the first character of the current group
         let start = 0;
         while (start < text.length) {
             const color = colorOf[start];
 
-            // find the last character of the group (the last one with the same color)
+            // the first character of a block gets the line, so it is a group of its own
+            const isBlockStart = starts.has(start);
+
+            // find the last character of the group
             let end = start;
-            while (end + 1 < text.length && colorOf[end + 1] === color) {
+            while (!isBlockStart && end + 1 < text.length && colorOf[end + 1] === color && !starts.has(end + 1)) {
                 end++;
             }
 
             const piece = escapeText(text.slice(start, end + 1));    // the text of the group
-            if (color) {
-                html += `<span class="pc-${color}">${piece}</span>`;
+
+            // the css classes of the group (none = normal text)
+            const classes = [];
+            if (color) classes.push("pc-" + color);
+            if (isBlockStart) classes.push("pc-chunk-start");
+
+            if (classes.length > 0) {
+                html += `<span class="${classes.join(" ")}">${piece}</span>`;
             } else {
                 html += piece;
             }
@@ -551,8 +630,8 @@
     }
 
     // the two steps together: text in, html out
-    function buildHtml(text) {
-        return makeHtml(text, findColors(text));
+    function buildHtml(text, chunkStarts) {
+        return makeHtml(text, findColors(text), chunkStarts);
     }
 
 
@@ -565,6 +644,9 @@
     //   backdrop      the element behind it
     //   lastText      the text that the backdrop shows right now
     //   lastKeywords  the keywords that were used for it
+    //   lastChunkColor the line color and block size that were used for it
+    //   chunkStarts   positions where block 2, 3, 4, ... of 75 tokens start (from the server)
+    //   chunkTimer    the timer that waits before the server is asked
     //   waiting       true if an update is already planned
     const fields = [];
 
@@ -595,16 +677,64 @@
         field.backdrop.scrollLeft = field.textarea.scrollLeft;
     }
 
+    // builds the backdrop again from the text of the field and the known block starts
+    function redraw(field) {
+        field.backdrop.innerHTML = buildHtml(field.textarea.value, field.chunkStarts);
+        syncScroll(field);
+    }
+
+    // asks the server where the blocks of 75 tokens start (a little later, when typing has stopped)
+    function requestChunks(field) {
+        clearTimeout(field.chunkTimer);
+
+        // blocks are switched off: forget the old ones
+        if (getChunkLineColor() === "") {
+            field.chunkStarts = [];
+            return;
+        }
+
+        field.chunkTimer = setTimeout(async function () {
+            const sentText = field.textarea.value;
+            try {
+                const response = await fetch("/prompt_colors/chunks", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ text: sentText, size: getChunkSize() }),
+                });
+                const data = await response.json();
+
+                // use the answer only if the text is still the same
+                if (field.textarea.value === sentText) {
+                    field.chunkStarts = data.starts || [];
+                    redraw(field);
+                }
+            } catch (error) {
+                // no server answer: the blocks are just not shown
+            }
+        }, CHUNK_DELAY_MS);
+    }
+
     // shows the current text of the field in the backdrop
-    // (only if the text or the keywords changed, otherwise nothing is built again)
+    // (only if the text, the keywords or the block setting changed, otherwise nothing is built again)
     function updateText(field) {
         const text = field.textarea.value;
         const keywords = getKeywordSetting();
+        const chunkColor = getChunkKey();
 
-        if (text !== field.lastText || keywords !== field.lastKeywords) {
+        if (text !== field.lastText || keywords !== field.lastKeywords || chunkColor !== field.lastChunkColor) {
+            const blocksChanged = text !== field.lastText || chunkColor !== field.lastChunkColor;
             field.lastText = text;
             field.lastKeywords = keywords;
-            field.backdrop.innerHTML = buildHtml(text);
+            field.lastChunkColor = chunkColor;
+
+            if (chunkColor === "") {
+                field.chunkStarts = [];
+            }
+            redraw(field);
+
+            if (blocksChanged) {
+                requestChunks(field);
+            }
         }
         syncScroll(field);
     }
@@ -640,7 +770,7 @@
         parent.insertBefore(backdrop, textarea);
 
         // remember everything that belongs to this field
-        const field = { textarea: textarea, backdrop: backdrop, lastText: null, lastKeywords: null, waiting: false };
+        const field = { textarea: textarea, backdrop: backdrop, lastText: null, lastKeywords: null, lastChunkColor: null, waiting: false, chunkStarts: [], chunkTimer: null };
         fields.push(field);
 
         // when typing: show the new text
@@ -697,7 +827,8 @@
             for (const field of fields) {
                 const textChanged = field.textarea.value !== field.lastText;
                 const keywordsChanged = getKeywordSetting() !== field.lastKeywords;
-                if (textChanged || keywordsChanged) {
+                const chunkColorChanged = getChunkKey() !== field.lastChunkColor;
+                if (textChanged || keywordsChanged || chunkColorChanged) {
                     scheduleText(field);
                 }
             }
@@ -770,14 +901,46 @@
     // 9. Start
     // ===============================================================
 
+    // ===============================================================
+    // 8b. Autocomplete list after "<": all "lora ..." entries first
+    // ===============================================================
+    // The extension TagComplete (a different extension, not changed) builds the list with the global
+    // function addResultsToList(textArea, results, tagword, resetList). We wrap this function: when the
+    // typed word starts with "<", the list "results" is sorted first (all entries whose meta text starts
+    // with "lora" go to the top, the rest keeps its order), then the original function runs as usual.
+    // The wrap is done only once, as soon as TagComplete is loaded.
+    let tagCompleteWrapped = false;
+
+    function isLoraEntry(result) {
+        const meta = String((result && result.meta) || "").toLowerCase();
+        return meta.startsWith("lora") ? 0 : 1;
+    }
+
+    function wrapTagComplete() {
+        if (tagCompleteWrapped || typeof window.addResultsToList !== "function") {
+            return;    // done already, or TagComplete is not loaded (yet)
+        }
+        tagCompleteWrapped = true;
+
+        const original = window.addResultsToList;
+        window.addResultsToList = function (textArea, list, word, resetList) {
+            if (resetList && typeof word === "string" && word.startsWith("<") && Array.isArray(list)) {
+                list.sort((a, b) => isLoraEntry(a) - isLoraEntry(b));    // stable: the order inside the groups stays
+            }
+            return original.apply(this, arguments);
+        };
+    }
+
     // ids of the prompt fields that already have a backdrop
     const doneIds = [];
 
     // runs shortly after the page changed (fields can appear later, for example the settings page)
     function onUpdate() {
+        wrapTagComplete();
+
         // color the fields of the settings page (only if this page exists)
         if (getRoot().querySelector("#column_settings_prompt_colors")) {
-            for (const name of COLOR_NAMES) {
+            for (const name of PAINTED_SETTINGS) {
                 paintSettingField(name);
             }
         }

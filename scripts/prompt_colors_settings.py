@@ -47,6 +47,18 @@ def on_ui_settings():
             shared.OptionInfo(color, label, section=section),
         )
 
+    # how many tokens one block has (75 is the size of CLIP, only change it for tests)
+    # 0 or an empty field switches the lines between the chunks off
+    shared.opts.add_option(
+        "prompt_colors_chunk_size",
+        shared.OptionInfo(75, "Tokens per chunk block  (0 = off, default 75)", section=section),
+    )
+
+    shared.opts.add_option(
+        "prompt_colors_chunk_line_color",
+        shared.OptionInfo("#ff9900", "Chunk block line color  (empty or invalid = off, default #ff9900)", section=section),
+    )
+
     # last field: how often the prompt fields are checked for text that a program changed
     # (paste, autocomplete)
     shared.opts.add_option(
