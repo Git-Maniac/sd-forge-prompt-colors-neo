@@ -11,6 +11,8 @@
 //                     (75 is the default, the size can be changed in the settings)
 //                     (the server counts the tokens, see scripts/prompt_colors_chunks.py)
 //   BREAK, AND, ...   keywords (the list is in the settings)
+//   empty commas      a comma that only has spaces between it and the comma before (,, or , ,)
+//                     gets the "bracket unbalanced" color, the first comma stays normal
 //   spaces at line end  spaces at the end of a line get the "bracket unbalanced" color as background,
 //                       but not in the line where the cursor is (spaces inside a line are not affected)
 //   bracket pair      when the cursor is directly before or after a bracket, this bracket and its
@@ -530,6 +532,28 @@
         return close + 1 - i;
     }
 
+    // rule: an empty comma. A comma is empty if the previous character (spaces are skipped)
+    // is a comma too, for example the second comma in  a,, b  or  a, , b
+    // The first comma of such a row is normal, only the following ones get the error color.
+    function colorEmptyComma(text, i, colorOf) {
+        if (text[i] !== ",") {
+            return 0;
+        }
+
+        // go back over the spaces in front of this comma
+        let back = i - 1;
+        while (back >= 0 && text[back] === " ") {
+            back--;
+        }
+
+        // the first character that is not a space is a comma: this comma is empty
+        if (back >= 0 && text[back] === ",") {
+            colorOf[i] = "error";
+            return 1;
+        }
+        return 0;
+    }
+
     // rule: the single character  |
     // A pipe is only valid inside curly brackets { }, for example {a|b}.
     // Outside of them it gets the error color (comments are handled by earlier rules,
@@ -617,6 +641,7 @@
             if (length === 0 && !hasBackslash) length = colorWeight(text, i, colorOf);
             if (length === 0 && !hasBackslash) length = colorStyleVariable(text, i, colorOf);
             if (length === 0 && !hasBackslash) length = colorWrapCommand(text, i, colorOf);
+            if (length === 0 && !hasBackslash) length = colorEmptyComma(text, i, colorOf);
             if (length === 0 && !hasBackslash) length = colorSingleChar(text, i, colorOf, waiting);
             if (length === 0 && !hasBackslash) length = colorBracket(text, i, colorOf, waiting, pairs);
 
