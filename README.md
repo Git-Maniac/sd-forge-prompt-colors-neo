@@ -45,8 +45,11 @@ The "bracket unbalanced color" is used for several mistakes:
 
 - a bracket that has no partner (an opening bracket without a closing one, or the other way round, or a wrong type like `(a]`)
 - a pipe `|` outside of curly brackets
-- empty commas: a comma that has only spaces between it and the comma before it, like `,,` or `, ,`. The first comma stays normal, only the following ones are colored (`a,, b` -> the second comma, `a , , , b` -> the last two)
-- spaces at the end of a line (also at the end of the whole text): they get the color as **background**. Spaces inside a line are never marked. The spaces of the line where the cursor is are not marked, because you are probably still typing there. When the cursor leaves the line, they are marked.
+- several commas in a row (empty commas): a comma that has only spaces between it and the comma before it, like `,,` or `, ,`. The first comma stays normal, only the following ones are colored (`a,, b` -> the second comma, `a , , , b` -> the last two). A line break between the commas does not count.
+- extra spaces: they get the color as **background**.
+  - Several spaces in a row inside a line (like `a   b`): the first space stays normal, the second and the following ones are marked. A single space between two words is never marked.
+  - Spaces at the end of a line (also at the end of the whole text): all of them are marked.
+  - A row of spaces where the cursor is (in it, or directly before or behind it) is not marked, because you are probably still typing there. When the cursor leaves, they are marked.
 
 ### Bracket pair highlight
 

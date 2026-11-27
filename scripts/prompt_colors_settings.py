@@ -56,22 +56,28 @@ def on_ui_settings():
 
     shared.opts.add_option(
         "prompt_colors_chunk_line_color",
-        shared.OptionInfo("#ff9900", "Chunk block line color  (empty or invalid = off, default #ff9900)", section=section),
+        shared.OptionInfo("#ff9900", "Chunk block line color  (default #ff9900)", section=section),
     )
 
     # the bracket pair at the cursor: the color of its background and frame
     # (an empty or invalid color switches the highlight off)
     shared.opts.add_option(
         "prompt_colors_pair_highlight_color",
-        shared.OptionInfo("#ffffff", "Bracket pair highlight color  (empty or invalid = off, default #ffffff)", section=section),
+        shared.OptionInfo("#ffffff", "Bracket pair highlight color  (default #ffffff)", section=section),
     )
 
-    # last field: how often the prompt fields are checked for text that a program changed
+    # how often the prompt fields are checked for text that a program changed
     # (paste, autocomplete)
     shared.opts.add_option(
         "prompt_colors_timer",
         shared.OptionInfo(300, "Response delay in ms  (0 = off, default 300)", section=section),
     )
+
+    # last line: a hint text (it is only shown, nothing is saved), its place is set in style.css
+    # (OptionHTML has no "section" argument, so the section is set afterwards)
+    hint = shared.OptionHTML("An empty or invalid color disables that rule")
+    hint.section = section
+    shared.opts.add_option("prompt_colors_color_hint", hint)
 
 
 script_callbacks.on_ui_settings(on_ui_settings)

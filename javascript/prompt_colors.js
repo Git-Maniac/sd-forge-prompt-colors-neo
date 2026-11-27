@@ -13,8 +13,9 @@
 //   BREAK, AND, ...   keywords (the list is in the settings)
 //   empty commas      a comma that only has spaces between it and the comma before (,, or , ,)
 //                     gets the "bracket unbalanced" color, the first comma stays normal
-//   spaces at line end  spaces at the end of a line get the "bracket unbalanced" color as background,
-//                       but not in the line where the cursor is (spaces inside a line are not affected)
+//   extra spaces      spaces at the end of a line get the "bracket unbalanced" color as background.
+//                     Inside a line the first space of a row is normal, the second and the following
+//                     ones get the background. A row of spaces where the cursor is is not marked.
 //   bracket pair      when the cursor is directly before or after a bracket, this bracket and its
 //                     partner get a frame (the color is in the settings, an empty or invalid color = off)
 //   __name__          wildcards (from the first __ to the next __)
@@ -297,7 +298,7 @@
             css += `.pc-${name} { color: ${value}; }\n`;
         }
 
-        // spaces at the end of a line: the background has the color of "bracket unbalanced"
+        // extra spaces (see findMarkedSpaces): the background has the color of "bracket unbalanced"
         // (if that color is empty or not valid, the spaces are not marked)
         const errorColor = String(opts.prompt_colors_error || "").trim();
         if (errorColor !== "" && CSS.supports("color", errorColor)) {
@@ -661,56 +662,63 @@
     // 5. Make the html
     // ===============================================================
 
-    // finds the spaces at the end of a line, and returns their positions (a Set).
-    // Spaces inside of a line are not affected, only the ones right before a line break
-    // or at the end of the text.
-    // The spaces of the line where the cursor is are skipped (the cursor is in them, or
-    // directly before or behind them), because there the user is just typing.
-    // cursor = -1 means: no cursor (no focus), so all spaces at line ends are found.
-    function findTrailingSpaces(text, cursor) {
-        const trailing = new Set();
+    // finds the spaces that must be marked, and returns their positions (a Set).
+    // A row of spaces is looked at as a whole:
+    //   - at the end of a line (or of the text): all spaces of the row are marked
+    //   - inside of a line: the first space is normal, the second and the following ones are marked
+    //     (so a single space between two words is never marked)
+    // A row of spaces where the cursor is (in it, or directly before or behind it) is skipped,
+    // because there the user is just typing.
+    // cursor = -1 means: no cursor (no focus), so all rows are checked.
+    function findMarkedSpaces(text, cursor) {
+        const marked = new Set();
 
-        // k goes over every position, also over the end of the text (k === text.length)
-        for (let k = 0; k <= text.length; k++) {
-            const isLineEnd = k === text.length || text[k] === "\n";
-            if (!isLineEnd) {
+        let k = 0;    // the position in the text
+        while (k < text.length) {
+            // not a space: go on
+            if (text[k] !== " ") {
+                k++;
                 continue;
             }
 
-            // go back from the line end as long as there are spaces
-            // (afterwards "first" is the position of the first space of this group)
-            let first = k;
-            while (first > 0 && text[first - 1] === " ") {
-                first--;
+            // "first" is the first space of the row, "end" is the position behind the last space
+            const first = k;
+            let end = k;
+            while (end < text.length && text[end] === " ") {
+                end++;
             }
-
-            // no spaces at the end of this line
-            if (first === k) {
-                continue;
-            }
+            k = end;    // the next look starts behind the row
 
             // the cursor is at the same place: do not mark these spaces
-            if (cursor >= first && cursor <= k) {
+            if (cursor >= first && cursor <= end) {
                 continue;
             }
 
-            for (let position = first; position < k; position++) {
-                trailing.add(position);
+            // is the row at the end of a line (a line break or the end of the text comes next)?
+            const atLineEnd = end === text.length || text[end] === "\n";
+
+            // at a line end all spaces are marked, otherwise all but the first one
+            let from = first + 1;
+            if (atLineEnd) {
+                from = first;
+            }
+            for (let position = from; position < end; position++) {
+                marked.add(position);
             }
         }
-        return trailing;
+        return marked;
     }
 
     // turns the text and its colors into html for the backdrop, for example:
     //     a <span class="pc-curly">{</span>b<span class="pc-curly">}</span>
     // chunkStarts: the positions where block 2, 3, 4, ... start (from the API), optional
     // marked: the positions of the two brackets that are highlighted, or null
-    // cursor: the position of the cursor (-1 = none), the spaces at the end of its line are not marked
+    // cursor: the position of the cursor (-1 = none), the row of spaces at the cursor is not marked
     function makeHtml(text, colorOf, chunkStarts, marked, cursor) {
         // a Set is fast to look in, also for a long text with many blocks
         const starts = new Set(chunkStarts || []);
         const markedSet = new Set(marked || []);
-        const trailing = findTrailingSpaces(text, cursor);
+        const trailing = findMarkedSpaces(text, cursor);
         let html = "";
 
         // Characters in a row with the same color share ONE <span>

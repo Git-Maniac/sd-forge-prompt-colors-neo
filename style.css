@@ -23,7 +23,33 @@
     order: -1;
 }
 
-/* the timer field is the last one and starts a new row */
-#setting_prompt_colors_timer {
+/* the last row, from left to right: the chunk line color field starts a new row
+   (first column), then the chunk size field, then the response delay (timer) field */
+#setting_prompt_colors_chunk_line_color {
+    order: 1;
     grid-column: 1;
+}
+#setting_prompt_colors_chunk_size {
+    order: 2;
+}
+#setting_prompt_colors_timer {
+    order: 3;
+}
+
+/* the hint text is the last line, as wide as the whole row */
+#setting_prompt_colors_color_hint {
+    order: 4;
+    grid-column: 1 / -1;
+
+    /* no frame and no box around the text, the text is bold */
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    font-weight: bold;
+}
+#setting_prompt_colors_color_hint * {
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    font-weight: bold;
 }
