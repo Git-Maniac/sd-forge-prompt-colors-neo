@@ -17,17 +17,42 @@ from modules import script_callbacks, sd_models
 
 
 
+# Gives how many characters at the start of the text are a "$$" prefix, for example:
+#     "2$$a|b"  -> 3      (the prefix is "2$$")
+#     "2-3$$a"  -> 5      (the prefix is "2-3$$")
+#     "a|b"     -> 0      (no prefix)
+def find_prefix_length(inner):
+    allowed = "0123456789- "    # a prefix before the first $$ has only digits, a minus and spaces
+    first_pipe = inner.find("|")
+
+    # is there a "$$" before the first | ?
+    dollars = inner.find("$$")
+    if dollars == -1 or (first_pipe != -1 and dollars > first_pipe):
+        return 0
+
+    # the text in front of the "$$" must be only digits, minus and spaces (like "2" or "2-3")
+    for character in inner[:dollars]:
+        if character not in allowed:
+            return 0
+    prefix_length = dollars + 2
+
+    # an optional second "$$" (like "2$$ and $$") is part of the prefix too
+    second = inner.find("$$", prefix_length)
+    if second != -1 and (first_pipe == -1 or second < first_pipe):
+        prefix_length = second + 2
+
+    return prefix_length
+
+
 # One Dynamic Prompts choice like {a|b|c} gives only ONE of its words in the end, so it is counted
 # as one word: the first choice stays, the brackets, the | and the other choices are replaced by spaces.
 # Parts of the form {2$$a|b|c} (take 2 choices) are counted as one choice too.
 # ${var=x} and %{...} are not choices, they are skipped.
 def keep_first_choice(match):
-    whole = match.group(0)
     inner = match.group(1)
 
     # the "2$$" or "2-3$$" or "2$$ and $$" in front of the choices is not part of the text
-    prefix = re.match(r"\s*\d*-?\d*\$\$(?:[^|$]*\$\$)?", inner)
-    prefix_length = prefix.end() if prefix else 0
+    prefix_length = find_prefix_length(inner)
 
     # the first choice ends at the first | (or at the end)
     first_end = inner.find("|", prefix_length)
