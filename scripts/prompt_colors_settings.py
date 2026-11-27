@@ -59,6 +59,13 @@ def on_ui_settings():
         shared.OptionInfo("#ff9900", "Chunk block line color  (empty or invalid = off, default #ff9900)", section=section),
     )
 
+    # the bracket pair at the cursor: the color of its background and frame
+    # (an empty or invalid color switches the highlight off)
+    shared.opts.add_option(
+        "prompt_colors_pair_highlight_color",
+        shared.OptionInfo("#ffffff", "Bracket pair highlight color  (empty or invalid = off, default #ffffff)", section=section),
+    )
+
     # last field: how often the prompt fields are checked for text that a program changed
     # (paste, autocomplete)
     shared.opts.add_option(

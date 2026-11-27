@@ -11,6 +11,10 @@
 //                     (75 is the default, the size can be changed in the settings)
 //                     (the server counts the tokens, see scripts/prompt_colors_chunks.py)
 //   BREAK, AND, ...   keywords (the list is in the settings)
+//   spaces at line end  spaces at the end of a line get the "bracket unbalanced" color as background,
+//                       but not in the line where the cursor is (spaces inside a line are not affected)
+//   bracket pair      when the cursor is directly before or after a bracket, this bracket and its
+//                     partner get a frame (the color is in the settings, an empty or invalid color = off)
 //   __name__          wildcards (from the first __ to the next __)
 //   # ... and // ...  comment until the end of the line
 //   /* ... */         comment (can be over several lines)
@@ -56,8 +60,8 @@
     const COLOR_NAMES = ["curly", "round", "square", "angle", "pipe", "dollar", "percent", "comment", "wildcard", "keyword", "weight", "error"];
 
     // all settings fields that are painted with the color written in them
-    // (the colors above, and the line color of the 75 token blocks)
-    const PAINTED_SETTINGS = [...COLOR_NAMES, "chunk_line_color"];
+    // (the colors above, the line color of the 75 token blocks and the color of the bracket pair)
+    const PAINTED_SETTINGS = [...COLOR_NAMES, "chunk_line_color", "pair_highlight_color"];
 
     // characters that stand alone and need no partner: character -> color name
     // ($ and % are not here: they are handled together with the text behind them)
@@ -153,6 +157,30 @@
             return "";
         }
         return value;
+    }
+
+    // the color of the bracket pair at the cursor, from the settings
+    // gives "" (= no highlight) if the color is empty or not valid
+    function getPairColor() {
+        if (typeof opts === "undefined") {
+            return "";    // the settings are not loaded yet
+        }
+
+        const value = String(opts.prompt_colors_pair_highlight_color || "").trim();
+        if (value === "" || !CSS.supports("color", value)) {
+            return "";
+        }
+        return value;
+    }
+
+    // the position of the cursor in a field, or -1 if there is no cursor:
+    // the field has no focus, or a part of the text is selected
+    function getCursorPosition(field) {
+        const textarea = field.textarea;
+        if (document.activeElement !== textarea || textarea.selectionStart !== textarea.selectionEnd) {
+            return -1;
+        }
+        return textarea.selectionStart;
     }
 
     // is this character a letter, a digit or _ ?
@@ -265,6 +293,22 @@
             }
 
             css += `.pc-${name} { color: ${value}; }\n`;
+        }
+
+        // spaces at the end of a line: the background has the color of "bracket unbalanced"
+        // (if that color is empty or not valid, the spaces are not marked)
+        const errorColor = String(opts.prompt_colors_error || "").trim();
+        if (errorColor !== "" && CSS.supports("color", errorColor)) {
+            css += `.pc-trailing { background: ${errorColor}; }
+`;
+        }
+
+        // the bracket pair at the cursor: a frame.
+        // The frame is an "outline" (it takes no room, so the text does not move).
+        const pairColor = getPairColor();
+        if (pairColor !== "") {
+            css += `.pc-pair { outline: 1px solid ${pairColor}; outline-offset: -1px; border-radius: 2px; }
+`;
         }
 
         // a horizontal line over the whole width of the field, at the top of the text line
@@ -508,7 +552,9 @@
     // rule: brackets
     // "waiting" is the list of opening brackets that still wait for their closing bracket
     // (it is a list of positions, the last one is the bracket that must be closed first)
-    function colorBracket(text, i, colorOf, waiting) {
+    // "pairs" is filled with the positions of every bracket pair that fits together:
+    // opening position -> closing position and closing position -> opening position
+    function colorBracket(text, i, colorOf, waiting, pairs) {
         const ch = text[i];
 
         if (OPENING[ch] !== undefined) {
@@ -530,6 +576,10 @@
                 colorOf[openPosition] = colorName;
                 colorOf[i] = colorName;
 
+                // remember the pair (for the highlight at the cursor)
+                pairs.set(openPosition, i);
+                pairs.set(i, openPosition);
+
                 // < > : the text between the brackets gets the same color,
                 // for example the whole <lora:name:0.8> (this replaces the colors inside)
                 if (text[openPosition] === "<") {
@@ -546,7 +596,8 @@
 
     // returns a list with one color name for every character of the text
     // (null means: normal text, no color)
-    function findColors(text) {
+    // "pairs" (a Map) is filled with the bracket pairs, see colorBracket()
+    function findColors(text, pairs) {
         const colorOf = new Array(text.length).fill(null);    // a list of the same length as the text, filled with null
         const keywords = getKeywords();
         const waiting = [];    // positions of opening brackets that wait for their closing bracket
@@ -567,7 +618,7 @@
             if (length === 0 && !hasBackslash) length = colorStyleVariable(text, i, colorOf);
             if (length === 0 && !hasBackslash) length = colorWrapCommand(text, i, colorOf);
             if (length === 0 && !hasBackslash) length = colorSingleChar(text, i, colorOf, waiting);
-            if (length === 0 && !hasBackslash) length = colorBracket(text, i, colorOf, waiting);
+            if (length === 0 && !hasBackslash) length = colorBracket(text, i, colorOf, waiting, pairs);
 
             // go on behind the characters that were colored (if no rule fit: go one character on)
             if (length === 0) {
@@ -585,12 +636,56 @@
     // 5. Make the html
     // ===============================================================
 
+    // finds the spaces at the end of a line, and returns their positions (a Set).
+    // Spaces inside of a line are not affected, only the ones right before a line break
+    // or at the end of the text.
+    // The spaces of the line where the cursor is are skipped (the cursor is in them, or
+    // directly before or behind them), because there the user is just typing.
+    // cursor = -1 means: no cursor (no focus), so all spaces at line ends are found.
+    function findTrailingSpaces(text, cursor) {
+        const trailing = new Set();
+
+        // k goes over every position, also over the end of the text (k === text.length)
+        for (let k = 0; k <= text.length; k++) {
+            const isLineEnd = k === text.length || text[k] === "\n";
+            if (!isLineEnd) {
+                continue;
+            }
+
+            // go back from the line end as long as there are spaces
+            // (afterwards "first" is the position of the first space of this group)
+            let first = k;
+            while (first > 0 && text[first - 1] === " ") {
+                first--;
+            }
+
+            // no spaces at the end of this line
+            if (first === k) {
+                continue;
+            }
+
+            // the cursor is at the same place: do not mark these spaces
+            if (cursor >= first && cursor <= k) {
+                continue;
+            }
+
+            for (let position = first; position < k; position++) {
+                trailing.add(position);
+            }
+        }
+        return trailing;
+    }
+
     // turns the text and its colors into html for the backdrop, for example:
     //     a <span class="pc-curly">{</span>b<span class="pc-curly">}</span>
     // chunkStarts: the positions where block 2, 3, 4, ... start (from the API), optional
-    function makeHtml(text, colorOf, chunkStarts) {
+    // marked: the positions of the two brackets that are highlighted, or null
+    // cursor: the position of the cursor (-1 = none), the spaces at the end of its line are not marked
+    function makeHtml(text, colorOf, chunkStarts, marked, cursor) {
         // a Set is fast to look in, also for a long text with many blocks
         const starts = new Set(chunkStarts || []);
+        const markedSet = new Set(marked || []);
+        const trailing = findTrailingSpaces(text, cursor);
         let html = "";
 
         // Characters in a row with the same color share ONE <span>
@@ -600,12 +695,20 @@
         while (start < text.length) {
             const color = colorOf[start];
 
-            // the first character of a block gets the line, so it is a group of its own
+            // the first character of a block gets the line, and a highlighted bracket gets
+            // its frame, so each of them is a group of its own
             const isBlockStart = starts.has(start);
+            const isMarked = markedSet.has(start);
+            const isAlone = isBlockStart || isMarked;
+
+            // spaces at the end of a line are a group of their own (they get a background)
+            const isTrailing = trailing.has(start);
 
             // find the last character of the group
             let end = start;
-            while (!isBlockStart && end + 1 < text.length && colorOf[end + 1] === color && !starts.has(end + 1)) {
+            while (!isAlone && end + 1 < text.length && colorOf[end + 1] === color
+                   && trailing.has(end + 1) === isTrailing
+                   && !starts.has(end + 1) && !markedSet.has(end + 1)) {
                 end++;
             }
 
@@ -615,6 +718,8 @@
             const classes = [];
             if (color) classes.push("pc-" + color);
             if (isBlockStart) classes.push("pc-chunk-start");
+            if (isMarked) classes.push("pc-pair");
+            if (isTrailing) classes.push("pc-trailing");
 
             if (classes.length > 0) {
                 html += `<span class="${classes.join(" ")}">${piece}</span>`;
@@ -629,9 +734,35 @@
         return html + " ";
     }
 
-    // the two steps together: text in, html out
-    function buildHtml(text, chunkStarts) {
-        return makeHtml(text, findColors(text), chunkStarts);
+    // the cursor is directly before or after a bracket that has a partner:
+    // returns the positions of the two brackets, otherwise null
+    // "cursor" is the position of the cursor, -1 = no highlight
+    function findPairAtCursor(pairs, cursor) {
+        if (cursor < 0) {
+            return null;
+        }
+
+        // first the character before the cursor, then the one behind it
+        const candidates = [cursor - 1, cursor];
+        for (const position of candidates) {
+            if (pairs.has(position)) {
+                return [position, pairs.get(position)];
+            }
+        }
+        return null;
+    }
+
+    // the steps together: text in, html out
+    function buildHtml(text, chunkStarts, cursor) {
+        const pairs = new Map();
+        const colorOf = findColors(text, pairs);
+
+        // the bracket pair is only highlighted if there is a valid highlight color
+        let marked = null;
+        if (getPairColor() !== "") {
+            marked = findPairAtCursor(pairs, cursor);
+        }
+        return makeHtml(text, colorOf, chunkStarts, marked, cursor);
     }
 
 
@@ -645,6 +776,7 @@
     //   lastText      the text that the backdrop shows right now
     //   lastKeywords  the keywords that were used for it
     //   lastChunkColor the line color and block size that were used for it
+    //   lastCursor    the cursor position that was used for it (-1 = no highlight)
     //   chunkStarts   positions where block 2, 3, 4, ... of 75 tokens start (from the server)
     //   chunkTimer    the timer that waits before the server is asked
     //   waiting       true if an update is already planned
@@ -679,7 +811,7 @@
 
     // builds the backdrop again from the text of the field and the known block starts
     function redraw(field) {
-        field.backdrop.innerHTML = buildHtml(field.textarea.value, field.chunkStarts);
+        field.backdrop.innerHTML = buildHtml(field.textarea.value, field.chunkStarts, field.lastCursor);
         syncScroll(field);
     }
 
@@ -720,12 +852,14 @@
         const text = field.textarea.value;
         const keywords = getKeywordSetting();
         const chunkColor = getChunkKey();
+        const cursor = getCursorPosition(field);
 
-        if (text !== field.lastText || keywords !== field.lastKeywords || chunkColor !== field.lastChunkColor) {
+        if (text !== field.lastText || keywords !== field.lastKeywords || chunkColor !== field.lastChunkColor || cursor !== field.lastCursor) {
             const blocksChanged = text !== field.lastText || chunkColor !== field.lastChunkColor;
             field.lastText = text;
             field.lastKeywords = keywords;
             field.lastChunkColor = chunkColor;
+            field.lastCursor = cursor;
 
             if (chunkColor === "") {
                 field.chunkStarts = [];
@@ -770,7 +904,7 @@
         parent.insertBefore(backdrop, textarea);
 
         // remember everything that belongs to this field
-        const field = { textarea: textarea, backdrop: backdrop, lastText: null, lastKeywords: null, lastChunkColor: null, waiting: false, chunkStarts: [], chunkTimer: null };
+        const field = { textarea: textarea, backdrop: backdrop, lastText: null, lastKeywords: null, lastChunkColor: null, lastCursor: -1, waiting: false, chunkStarts: [], chunkTimer: null };
         fields.push(field);
 
         // when typing: show the new text
@@ -783,9 +917,18 @@
             syncScroll(field);
         });
 
+        // when the cursor moves (arrow keys, mouse click) or the focus is lost:
+        // show the bracket pair at the cursor
+        for (const eventName of ["keyup", "mouseup", "blur"]) {
+            textarea.addEventListener(eventName, function () {
+                scheduleText(field);
+            });
+        }
+
         // when the field gets the focus: make sure the backdrop is in the right place
         textarea.addEventListener("focus", function () {
             updateLook(field);
+            scheduleText(field);
         });
 
         // when the field (or the box around it) gets another size, the backdrop must follow
@@ -828,7 +971,8 @@
                 const textChanged = field.textarea.value !== field.lastText;
                 const keywordsChanged = getKeywordSetting() !== field.lastKeywords;
                 const chunkColorChanged = getChunkKey() !== field.lastChunkColor;
-                if (textChanged || keywordsChanged || chunkColorChanged) {
+                const cursorChanged = getCursorPosition(field) !== field.lastCursor;
+                if (textChanged || keywordsChanged || chunkColorChanged || cursorChanged) {
                     scheduleText(field);
                 }
             }
@@ -969,6 +1113,16 @@
     //    (onAfterUiUpdate runs 250 ms after the changes, not at every single change)
     onAfterUiUpdate(onUpdate);
 
-    // 4. start the timer
+    // 4. when the cursor moves in a prompt field (also with the arrow keys held down):
+    //    show the bracket pair at the cursor
+    document.addEventListener("selectionchange", function () {
+        for (const field of fields) {
+            if (document.activeElement === field.textarea) {
+                scheduleText(field);
+            }
+        }
+    });
+
+    // 5. start the timer
     checkFields();
 })();

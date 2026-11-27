@@ -8,6 +8,8 @@
 
 Prettier prompts with collorfull tags. You can configure for prompt tag words like BREAK, AND or brackets like <> () [] {} with colors of your choise.
 
+Bracket pair highlight: when the cursor is directly before or after a bracket `{}` `[]` `()` `<>`, this bracket and its partner get a frame. The color is set in Settings -> Extensions -> Prompt Colors. An empty or invalid color switches the highlight off.
+
 It supports:
 
   sd-webui-forge-neo from Haoming02: <https://github.com/Haoming02/sd-webui-forge-classic>
